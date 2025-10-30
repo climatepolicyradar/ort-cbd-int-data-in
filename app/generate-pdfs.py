@@ -36,7 +36,7 @@ for government in governments:
     print(f"Generating PDF for {government}")
     pdf = MarkdownPdf(toc_level=2, optimize=True)
     text = ""
-    text += "![Header](.data_cache/header.png)\n\n\n"
+    text += "![Header](app/header.png)\n\n\n"
     text += f"# {government} UNCBD National Targets\n\n\n"
 
     for model in models:
