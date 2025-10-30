@@ -7,6 +7,7 @@ import pytest
 import requests
 
 from prefect import flow, task
+from prefect_aws import AwsCredentials, S3Bucket
 from prefect.assets import materialize
 from prefect.testing.utilities import prefect_test_harness
 
@@ -17,7 +18,7 @@ from .csv_api import OrtCbdIntCsv
 Path(".data_cache").mkdir(exist_ok=True)
 
 
-@materialize("s3://cpr-cache/pipelines/ort.cbd.int/source-data.csv")
+@materialize("s3://cpr-cache/pipelines/ort-cbd-int-data-in/source-data.csv")
 def extract_source_data():
     source_url = (
         "https://api.cbd.int/api/v2022/documents/schemas/nationalTarget7/download"
@@ -77,10 +78,16 @@ def extract_source_data():
     response.raise_for_status()
     response.encoding = "utf-8-sig"
 
-    with open(".data_cache/source-data.csv", "w", encoding="utf-8") as f:
+    source_data_path = Path(".data_cache/source-data.csv")
+    with source_data_path.open("w", encoding="utf-8") as f:
         f.write(response.text)
 
-    # s3_client.put_object(Bucket="cpr-cache", Key="pipelines/ort.cbd.int/source-data.csv", Body=response.text)
+    aws_credentials = AwsCredentials.load("aws-credentials-block-prod")
+    s3_bucket = S3Bucket(bucket_name="cpr-cache", credentials=aws_credentials)
+    s3_bucket.upload_from_path(
+        source_data_path, to_path="pipelines/ort-cbd-int-data-in/source-data.csv"
+    )
+
     return response.text
 
 
@@ -134,112 +141,6 @@ def get_latest_target_for_government(government: str):
         models.append(model)
 
     return max(models, key=lambda x: x.published_on)
-
-
-def transform_input(input: OrtCbdIntCsv) -> DBStateEntry:
-    family_import_id = f"UNCDB.family.{input.unique_id}.n0000"
-    document_import_id = f"UNCDB.document.{input.unique_id}.n0000"
-    event_import_id = f"UNCDB.event.{input.unique_id}.n0000"
-
-    if input.government == "Netherlands (Kingdom of the)":
-        geography_name = "Netherlands"
-    elif input.government == "United Republic of Tanzania":
-        geography_name = "Tanzania, United Republic of"
-    elif input.government == "Iran (Islamic Republic of)":
-        geography_name = "Iran, Islamic Republic of"
-    elif input.government == "Bolivia (Plurinational State of)":
-        geography_name = "Bolivia, Plurinational State of"
-    elif input.government == "Venezuela (Bolivarian Republic of)":
-        geography_name = "Venezuela, Bolivarian Republic of"
-    elif input.government == "Democratic Republic of the Congo":
-        geography_name = "Congo, The Democratic Republic of the"
-    elif input.government == "Türkiye":
-        geography_name = "Türkiye"
-    elif input.government == "United Kingdom of Great Britain and Northern Ireland":
-        geography_name = "United Kingdom"
-    elif input.government == "Republic of Korea":
-        geography_name = "Korea, Democratic People's Republic of"
-    elif input.government == "Republic of Moldova":
-        geography_name = "Moldova, Republic of"
-    else:
-        geography_name = input.government
-
-    geography = pycountry.countries.get(name=geography_name)
-
-    if not geography:
-        print(f"Country not found: {input.government} {input.unique_id}")
-
-    return DBStateEntry(
-        family=CPRFamily(
-            import_id=family_import_id,
-            title=input.national_target_title,
-            summary=input.description,
-            geographies=[geography.alpha_3],
-            metadata={},
-            collections=[],
-            category="",
-            concepts=[],
-            last_modified=datetime.strptime(
-                get_latest_target_for_government(input.government).published_on,
-                "%d-%b-%Y %H:%M",
-            ),
-        ),
-        document=CPRDocument(
-            import_id=document_import_id,
-            family_import_id=family_import_id,
-            metadata={},
-            title=input.national_target_title,
-            source_url=input.url,
-            variant_name="",
-        ),
-        event=CPREvent(
-            import_id=event_import_id,
-            family_import_id=family_import_id,
-            family_document_import_id=document_import_id,
-            event_title="Submitted",
-            event_type_value="Passed/Approved",
-            date=datetime.strptime(input.published_on, "%d-%b-%Y %H:%M")
-            .date()
-            .isoformat(),
-            metadata={
-                "action_taken": [],
-                "event_type": ["Passed/Approved"],
-                "description": ["Passed/Approved"],
-                "datetime_event_name": ["Passed/Approved"],
-            },
-        ),
-        collection=None,
-    )
-
-
-@materialize("s3://cpr-cache/pipelines/ort.cbd.int/transformed-data.json")
-def transform(source_data: str) -> str:
-    reader = csv.DictReader(StringIO(source_data))
-    models = []
-    entries = []
-    for row in reader:
-        try:
-            model = OrtCbdIntCsv(**row)
-            models.append(model)
-        except Exception as e:
-            print(f"Error parsing row: {e}")
-            continue
-
-    for model in models:
-        entry = transform_input(model)
-        entries.append(entry)
-
-    db_state = DBState(
-        families=[entry.family for entry in entries],
-        documents=[entry.document for entry in entries],
-        events=[entry.event for entry in entries],
-        collections=[],
-    )
-
-    with open(".data_cache/source-data.json", "w", encoding="utf-8") as f:
-        f.write(db_state.model_dump_json())
-
-    return db_state
 
 
 @task()
@@ -312,18 +213,33 @@ def transform_governments():
     return db_state_entries
 
 
-@flow
-def etl_pipeline():
-    extract_source_data()
-    db_state_entries = transform_governments()
+@materialize("s3://cpr-cache/pipelines/ort-cbd-int-data-in/db-state.json")
+def transform_db_state_entries(db_state_entries: list[DBStateEntry]):
     db_state = DBState(
         families=[entry.family for entry in db_state_entries],
         documents=[entry.document for entry in db_state_entries],
         events=[entry.event for entry in db_state_entries],
         collections=[],
     )
-    with open(".data_cache/source-data.json", "w", encoding="utf-8") as f:
+
+    db_state_path = Path(".data_cache/db-state.json")
+    with db_state_path.open("w", encoding="utf-8") as f:
         f.write(db_state.model_dump_json())
+
+    aws_credentials = AwsCredentials.load("aws-credentials-block-prod")
+    s3_bucket = S3Bucket(bucket_name="cpr-cache", credentials=aws_credentials)
+    s3_bucket.upload_from_path(
+        db_state_path, to_path="pipelines/ort-cbd-int-data-in/db-state.json"
+    )
+    return db_state
+
+
+@flow
+def etl_pipeline():
+    extract_source_data()
+    db_state_entries = transform_governments()
+    db_state = transform_db_state_entries(db_state_entries)
+    return db_state
 
 
 @pytest.fixture(autouse=True, scope="session")

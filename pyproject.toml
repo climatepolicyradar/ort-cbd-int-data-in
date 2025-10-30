@@ -2,14 +2,16 @@
 name = "ort-cbd-int"
 version = "0.1.0"
 description = "ORT CBD Integration"
-requires-python = "==3.12.*"
+requires-python = "==3.13.*"
 dependencies = [
   "boto3>=1.40.49",
   "localstack-sdk-python>=4.9.2",
   "markdown-pdf>=1.10",
   "pdfkit>=1.0.0",
   "playwright>=1.55.0",
-  "prefect>=3.4.23",
+  "prefect[aws]>=3.4.23",
+  "pulumi>=3.205.0",
+  "pulumi-aws>=7.10.0",
   "pycountry>=24.6.1",
   "pydantic>=2.0.0",
   "pytest>=8.4.2",
