@@ -1,0 +1,12 @@
+version: "3.8"
+services:
+  localstack:
+    image: localstack/localstack
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    environment:
+      - SERVICES=s3
+      - PERSISTENCE=1
+    volumes:
+      - ./.data_cache:/var/lib/localstack
