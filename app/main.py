@@ -176,8 +176,8 @@ def transform_governments():
         db_state_entry = DBStateEntry(
             family=CPRFamily(
                 import_id=family_import_id,
-                title=f"{government} UNCBD National Targets",
-                summary="",
+                title=f"{government} National Targets. GBF-NT",
+                summary=f"The CBD National Targets Submitted by {government}",
                 geographies=[geography.alpha_3],
                 metadata={},
                 collections=[],
@@ -188,8 +188,8 @@ def transform_governments():
             document=CPRDocument(
                 import_id=document_import_id,
                 family_import_id=family_import_id,
-                metadata={"type": ["National Targets"]},
-                title=f"{government} UNCBD National Targets",
+                metadata={"type": ["National Targets (NT)"]},
+                title=f"{government} National Targets. GBF-NT",
                 source_url=f"https://cdn.climatepolicyradar.org/pdfs/ort-cbd-int/{government}.pdf",
                 variant_name="",
             ),
