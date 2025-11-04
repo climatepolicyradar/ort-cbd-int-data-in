@@ -37,7 +37,7 @@ for government in governments:
     pdf = MarkdownPdf(toc_level=2, optimize=True)
     text = ""
     text += "![Header](app/header.png)\n\n\n"
-    text += f"# {government} UNCBD National Targets\n\n\n"
+    text += f"# {government} National Targets. GBF-NT\n\n\n"
 
     for model in models:
         if model.government != government:
@@ -64,14 +64,14 @@ for government in governments:
         text += _append_if_present(
             "Explain considerations", model.explain_considerations
         )
-        text += _append_if_present("headline_indicators", model.headline_indicators)
+        text += _append_if_present("Headline indicators", model.headline_indicators)
         text += _append_if_present("Binary indicators", model.binary_indicators)
         text += _append_if_present("Component indicators", model.component_indicators)
         text += _append_if_present(
             "Complementary indicators", model.complementary_indicators
         )
         text += _append_if_present(
-            "other_national_indicators", model.other_national_indicators
+            "Other national indicators", model.other_national_indicators
         )
         text += _append_if_present("Non-state commitments", model.non_state_commitments)
         text += _append_if_present("Overlaps or links", model.overlaps_or_links)
@@ -91,5 +91,8 @@ for government in governments:
         text += _append_if_present("Any other information", model.any_other_information)
         text += "---\n\n\n"
 
-    pdf.add_section(Section(text))
+    pdf.add_section(
+        Section(text),
+        user_css="h1 {font-size: 14px;} h2 {font-size: 12px;} p {font-size: 10px;}",
+    )
     pdf.save(str(root / f".data_cache/pdfs/{government}.pdf"))
