@@ -13,6 +13,7 @@ from prefect.testing.utilities import prefect_test_harness
 
 from .cpr_models import CPRDocument, CPREvent, CPRFamily, DBState, DBStateEntry
 from .csv_api import OrtCbdIntCsv
+import boto3
 
 
 Path(".data_cache").mkdir(exist_ok=True)
@@ -144,7 +145,7 @@ def get_latest_target_for_government(government: str):
 
 
 @task()
-def transform_governments():
+def transform_governments(governments_subset: list[str] = []):
     with open(".data_cache/source-data.csv", "r", encoding="utf-8") as f:
         source_data = f.read()
 
@@ -154,7 +155,7 @@ def transform_governments():
         model = OrtCbdIntCsv(**row)
         models.append(model)
 
-    governments = set(model.government for model in models)
+    governments = governments_subset or list(set(model.government for model in models))
 
     db_state_entries = []
     for government in governments:
@@ -179,19 +180,28 @@ def transform_governments():
                 title=f"{government} National Targets. GBF-NT",
                 summary=f"The CBD National Targets Submitted by {government}",
                 geographies=[geography.alpha_3],
-                metadata={},
+                metadata={
+                    "external_id": [
+                        f"https://ort.cbd.int/national-targets?recordTypes=nationalTarget7&countries={geography.alpha_2.lower()}"
+                    ],
+                    "author_type": ["Party"],
+                    "author": [geography.name],
+                },
                 collections=[],
-                category="",
+                category="UNFCCC",
                 concepts=[],
                 last_modified=last_modified,
             ),
             document=CPRDocument(
                 import_id=document_import_id,
                 family_import_id=family_import_id,
-                metadata={"type": ["National Targets (NT)"]},
+                metadata={
+                    "role": ["MAIN"],
+                    "type": ["National Target (NT)"],
+                },
                 title=f"{government} National Targets. GBF-NT",
                 source_url=f"https://cdn.climatepolicyradar.org/pdfs/ort-cbd-int/{government}.pdf",
-                variant_name="",
+                variant_name=None,
             ),
             event=CPREvent(
                 import_id=event_import_id,
@@ -201,9 +211,7 @@ def transform_governments():
                 event_type_value="Passed/Approved",
                 date=last_modified,
                 metadata={
-                    "action_taken": [],
                     "event_type": ["Passed/Approved"],
-                    "description": ["Passed/Approved"],
                     "datetime_event_name": ["Passed/Approved"],
                 },
             ),
@@ -234,12 +242,44 @@ def transform_db_state_entries(db_state_entries: list[DBStateEntry]):
     return db_state
 
 
-@flow
-def etl_pipeline():
+@flow(log_prints=True)
+def etl_pipeline(governments_subset: list[str] = []):
     extract_source_data()
-    db_state_entries = transform_governments()
+    db_state_entries = transform_governments(governments_subset=governments_subset)
     db_state = transform_db_state_entries(db_state_entries)
     return db_state
+
+
+@flow(log_prints=True)
+def bulk_import():
+    ssm_client = boto3.client("ssm", region_name="eu-west-1")
+    email = ssm_client.get_parameter(
+        Name="/Backend/API/SuperUser/Email", WithDecryption=True
+    )["Parameter"]["Value"]
+    password = ssm_client.get_parameter(
+        Name="/Backend/API/SuperUser/Password", WithDecryption=True
+    )["Parameter"]["Value"]
+
+    token_response = requests.post(
+        "https://admin.staging.climatepolicyradar.org/api/tokens",
+        timeout=1,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={
+            "username": email,
+            "password": password,
+        },
+    )
+    token = token_response.json()["access_token"]
+
+    bulk_import_response = requests.post(
+        "https://admin.staging.climatepolicyradar.org/api/v1/bulk-import/UN.corpus.UNCBD.n0000",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"data": open(".data_cache/db-state.json", "rb")},
+        timeout=10,
+    )
+
+    bulk_import_response.raise_for_status()
+    return bulk_import_response
 
 
 @pytest.fixture(autouse=True, scope="session")

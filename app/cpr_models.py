@@ -22,7 +22,7 @@ class CPRDocument(BaseModel):
     metadata: dict[str, list[str]]
     title: str
     source_url: str
-    variant_name: str
+    variant_name: str | None
 
 
 class CPREvent(BaseModel):
