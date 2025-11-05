@@ -20,7 +20,7 @@ Path(".data_cache").mkdir(exist_ok=True)
 
 
 @materialize("s3://cpr-cache/pipelines/ort-cbd-int-data-in/source-data.csv")
-def extract_source_data():
+def extract_source_data(write_to_s3: bool):
     source_url = (
         "https://api.cbd.int/api/v2022/documents/schemas/nationalTarget7/download"
     )
@@ -83,11 +83,12 @@ def extract_source_data():
     with source_data_path.open("w", encoding="utf-8") as f:
         f.write(response.text)
 
-    aws_credentials = AwsCredentials.load("aws-credentials-block-prod")
-    s3_bucket = S3Bucket(bucket_name="cpr-cache", credentials=aws_credentials)
-    s3_bucket.upload_from_path(
-        source_data_path, to_path="pipelines/ort-cbd-int-data-in/source-data.csv"
-    )
+    if write_to_s3:
+        aws_credentials = AwsCredentials.load("aws-credentials-block-prod")
+        s3_bucket = S3Bucket(bucket_name="cpr-cache", credentials=aws_credentials)
+        s3_bucket.upload_from_path(
+            source_data_path, to_path="pipelines/ort-cbd-int-data-in/source-data.csv"
+        )
 
     return response.text
 
@@ -222,7 +223,7 @@ def transform_governments(governments_subset: list[str] = []):
 
 
 @materialize("s3://cpr-cache/pipelines/ort-cbd-int-data-in/db-state.json")
-def transform_db_state_entries(db_state_entries: list[DBStateEntry]):
+def transform_db_state_entries(db_state_entries: list[DBStateEntry], write_to_s3: bool):
     db_state = DBState(
         families=[entry.family for entry in db_state_entries],
         documents=[entry.document for entry in db_state_entries],
@@ -234,19 +235,20 @@ def transform_db_state_entries(db_state_entries: list[DBStateEntry]):
     with db_state_path.open("w", encoding="utf-8") as f:
         f.write(db_state.model_dump_json())
 
-    aws_credentials = AwsCredentials.load("aws-credentials-block-prod")
-    s3_bucket = S3Bucket(bucket_name="cpr-cache", credentials=aws_credentials)
-    s3_bucket.upload_from_path(
-        db_state_path, to_path="pipelines/ort-cbd-int-data-in/db-state.json"
-    )
+    if write_to_s3:
+        aws_credentials = AwsCredentials.load("aws-credentials-block-prod")
+        s3_bucket = S3Bucket(bucket_name="cpr-cache", credentials=aws_credentials)
+        s3_bucket.upload_from_path(
+            db_state_path, to_path="pipelines/ort-cbd-int-data-in/db-state.json"
+        )
     return db_state
 
 
 @flow(log_prints=True)
-def etl_pipeline(governments_subset: list[str] = []):
-    extract_source_data()
+def etl_pipeline(governments_subset: list[str] = [], write_to_s3: bool = True):
+    extract_source_data(write_to_s3=write_to_s3)
     db_state_entries = transform_governments(governments_subset=governments_subset)
-    db_state = transform_db_state_entries(db_state_entries)
+    db_state = transform_db_state_entries(db_state_entries, write_to_s3=write_to_s3)
     return db_state
 
 
@@ -261,7 +263,7 @@ def bulk_import():
     )["Parameter"]["Value"]
 
     token_response = requests.post(
-        "https://admin.staging.climatepolicyradar.org/api/tokens",
+        "https://admin.climatepolicyradar.org/api/tokens",
         timeout=1,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         data={
@@ -272,7 +274,7 @@ def bulk_import():
     token = token_response.json()["access_token"]
 
     bulk_import_response = requests.post(
-        "https://admin.staging.climatepolicyradar.org/api/v1/bulk-import/UN.corpus.UNCBD.n0000",
+        "https://admin.climatepolicyradar.org/api/v1/bulk-import/UN.corpus.UNCBD.n0000",
         headers={"Authorization": f"Bearer {token}"},
         files={"data": open(".data_cache/db-state.json", "rb")},
         timeout=10,
